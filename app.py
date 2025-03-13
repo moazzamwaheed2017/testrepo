@@ -1,49 +1,76 @@
 import streamlit as st
 import requests
+import json
+from requests.auth import HTTPBasicAuth
+from difflib import get_close_matches
 
-# API Keys and URLs
-BLAND_API_KEY = 'org_fcfd61ec9ebaa2fcfa5b6c3b225aa4dd603d0b587e1493e16003e3f8bed4db9f375dc3a57d2493367c2069'
-BLAND_CALL_URL = "https://api.bland.ai/call"
+# Twilio Credentials
+account_sid = "AC9488694acbfe88b387a96e3f5850690d"
+auth_token = "5735ff71c6db7b7ba0ab0dea485ecbfb"
+twilio_phone_number = "+19566954595"
 
-# Task Script
-TASK_SCRIPT = (
-    "Say: Hello, how can I assist you today? "
-    "Wait for the user's response and transcribe it in real time. "
-    "Use the AI model (Grok) to analyze the user's query and generate a relevant response. "
-    "Speak the AI-generated response to the user. "
-    "Say: Would you like any more assistance? "
-    "Say: Thank you for reaching out. Have a great day!"
-)
+# Load JSON Data
+def load_data():
+    try:
+        with open("scraped_data1.json", "r", encoding="utf-8") as file:
+            return json.load(file)
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return []
+
+data = load_data()
+
+# Enhanced search function to find closest matching answer
+def search_query(query, data):
+    questions = [entry["content"] for entry in data if "content" in entry]
+    matches = get_close_matches(query, questions, n=1, cutoff=0.6)  # Adjust cutoff for better accuracy
+    return matches[0] if matches else "I couldn't find relevant information. Can you rephrase?"
+
+# Generate Twiml for Interactive Call
+def generate_twiml():
+    return (
+        "<?xml version='1.0' encoding='UTF-8'?>"
+        "<Response>"
+        "<Gather input='speech' timeout='5' speechTimeout='auto' action='/process-query' method='GET'>"
+        "<Say>Hello! Please ask your question.</Say>"
+        "</Gather>"
+        "<Redirect>/process-query</Redirect>"
+        "</Response>"
+    )
+
+# Generate Twiml response based on caller's question
+def generate_twiml_with_response(query):
+    response_text = search_query(query, data)
+    return (
+        "<?xml version='1.0' encoding='UTF-8'?>"
+        f"<Response><Say>{response_text}</Say><Redirect>/</Redirect></Response>"
+    )
 
 # Streamlit UI
 st.title("AI Call Assistant")
-st.write("Initiate a call using Bland.AI")
+st.write("Initiate an AI-powered call with real-time question answering")
 
 # User Input
-email = st.text_input("Email")
-name = st.text_input("Name")
-phone = st.text_input("Phone Number")
+recipient_phone_number = st.text_input("Recipient Phone Number")
 
 if st.button("Initiate Call"):
-    if not email or not name or not phone:
-        st.error("Please provide all required fields: Email, Name, and Phone Number.")
+    if not recipient_phone_number:
+        st.error("Please provide the recipient's phone number.")
     else:
-        call_data = {
-            "phone_number": phone,
-            "task": TASK_SCRIPT,
-            "summarize": True,
-            "record": True,
-            "max_duration": "1"
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
+        
+        data = {
+            "From": twilio_phone_number,
+            "To": recipient_phone_number,
+            "Twiml": generate_twiml()
         }
-
-        headers = {"Authorization": f"Bearer {BLAND_API_KEY}", "Content-Type": "application/json"}
         
         try:
-            response = requests.post(BLAND_CALL_URL, json=call_data, headers=headers)
-            if response.status_code == 200:
+            response = requests.post(url, data=data, auth=HTTPBasicAuth(account_sid, auth_token))
+            if response.status_code == 201:
                 call_response = response.json()
-                call_id = call_response.get("call_id")
-                st.success(f"Call initiated successfully! Call ID: {call_id}")
+                call_sid = call_response.get("sid")
+                st.success(f"Call initiated successfully! Call SID: {call_sid}")
             else:
                 st.error(f"Error: {response.text}")
         except requests.exceptions.RequestException as e:
